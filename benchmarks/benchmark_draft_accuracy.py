@@ -42,71 +42,13 @@ def main(args):
     input_ids = tokenizer(input_text)["input_ids"]
 
     draft_sp = SamplingParams(
-        n=1, temperature=args.temperature, max_tokens=args.gamma, logprobs=LOGPROBS_FANOUT
+        n=1, temperature=0., max_tokens=args.gamma, logprobs=LOGPROBS_FANOUT
     )
     oracle_sp = SamplingParams(
-        n=1, temperature=args.temperature, max_tokens=1, logprobs=LOGPROBS_FANOUT
+        n=1, temperature=0., max_tokens=1, logprobs=LOGPROBS_FANOUT
     )
 
     # follow the algorithm from https://arxiv.org/pdf/2211.17192.pdf page 3
-    def speculative_step_stochastic(prefix) -> Tuple[List[int], bool]:
-        draft_run = draft.generate.remote(
-            prompt_token_ids=[prefix], sampling_params=draft_sp
-        )
-        draft_run = ray.get(draft_run)
-        draft_run = draft_run[0].outputs[0]
-
-        xs = draft_run.token_ids
-        qs = draft_run.logprobs
-
-        oracle_prompts = [prefix]
-        for i in range(len(xs)):
-            oracle_prompts += [prefix + xs[: i + 1]]
-
-        oracle_run = oracle.generate.remote(
-            prompt_token_ids=oracle_prompts, sampling_params=oracle_sp
-        )
-        oracle_run = ray.get(oracle_run)
-        ps = [r.outputs[0].logprobs[0] for r in oracle_run]
-
-        rs = np.random.uniform(0, 1, size=(args.gamma,))
-        n = 0
-        for i, x in enumerate(xs):
-            qx = qs[i][x]
-            px = ps[i][x] if x in ps[i] else -1 * float("inf")
-            ratio = np.exp(px - qx)
-            # accept if r is less than ratio - reward guesses where p(x) is higher than q(x)
-            if rs[i] < ratio:
-                n += 1
-            else:
-                break
-
-        # TODO add temperature to the sampling step here
-        pp = ps[n]
-        sum_pp = 0
-        if n < len(xs) - 1:
-            # subtract draft probabilities
-            for k, v in pp.items():
-                pp[k] = np.exp(v)
-                if k in qs[n + 1]:
-                    pp[k] -= np.exp(qs[n + 1][k])
-                    if pp[k] < 0.0:
-                        pp[k] = 0.0
-                sum_pp += pp[k]
-
-            # normalize distribution
-            for k, v in pp.items():
-                pp[k] = v / sum_pp
-
-        # sample one token from pp
-        tokens = list(pp.keys())
-        probs = [pp[t] for t in tokens]
-        sampled_token = np.random.choice(tokens, p=probs)
-
-        done = oracle_run[n].outputs[0].finish_reason != "length"
-
-        return xs[:n] + [sampled_token], done
-
     def speculative_step_deterministic(prefix: List[int]) -> Tuple[List[int], bool]:
         draft_run = draft.generate.remote(
             prompt_token_ids=[prefix], sampling_params=draft_sp, use_tqdm=False
@@ -126,7 +68,7 @@ def main(args):
         oracle_run = ray.get(oracle_run)
 
         n = 0
-        sampled_token = -1
+        sampled_token = oracle_run[0].outputs[0].token_ids[0]
         for i, x in enumerate(xs):
             sampled_token = oracle_run[i].outputs[0].token_ids[0]
             if x == sampled_token:
@@ -145,21 +87,24 @@ def main(args):
     total_generated = 0
 
     for i in range(1000):
-        prompt = indexer[i].conversation_a[0]["content"]
+        conversation = indexer[i].conversation_a
+        prompt = conversation[0]["content"]
         input_ids = tokenizer(prompt)["input_ids"]
         prefix = list(input_ids)
+
+        answer = conversation[1]["content"]
+        max_tokens = len(tokenizer(answer)["input_ids"])
+
         done = False
         next_tokens = []
-        while not done:
+        while (not done) and len(prefix) < max_tokens:
             prefix += next_tokens
             next_tokens, done = speculative_step_deterministic(prefix)
             accepted += len(next_tokens) - 1
-            total_generated += len(next_tokens)
-            print("predicted", len(next_tokens), "tokens")
+            total_generated += min(len(next_tokens), args.gamma)
         print("total accepted: ", accepted)
         print("total generated: ", total_generated)
         print("alpha: ", accepted / total_generated)
-
 
 if __name__ == "__main__":
     runtime_env = {
