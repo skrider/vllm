@@ -13,6 +13,7 @@ import pandas as pd
 
 import ray
 
+
 def main(args):
     ray.init()
     oracle = ray.remote(num_gpus=(1.0 - 0.1 - args.split))(LLM).remote(
@@ -21,7 +22,8 @@ def main(args):
         max_num_seqs=args.batch_size * args.gamma,
         trust_remote_code=args.trust_remote_code,
         dtype=args.oracle_dtype,
-        gpu_memory_utilization=(1.0 - 0.1 - args.split))
+        gpu_memory_utilization=(1.0 - 0.1 - args.split),
+    )
 
     draft = ray.remote(num_gpus=(args.split))(LLM).remote(
         model=args.draft_model,
@@ -29,26 +31,25 @@ def main(args):
         max_num_seqs=args.batch_size,
         trust_remote_code=args.trust_remote_code,
         dtype=args.draft_dtype,
-        gpu_memory_utilization=(args.split))
+        gpu_memory_utilization=(args.split),
+    )
 
     input_text = "The strangest city in California is San"
     tokenizer = LlamaTokenizerFast.from_pretrained(args.tokenizer)
-    input_ids = tokenizer(input_text)['input_ids']
+    input_ids = tokenizer(input_text)["input_ids"]
 
     draft_sp = SamplingParams(
-            n=1, 
-            temperature=args.temperature, 
-            max_tokens=args.gamma, 
-            logprobs=1024)
+        n=1, temperature=args.temperature, max_tokens=args.gamma, logprobs=1024
+    )
     oracle_sp = SamplingParams(
-            n=1, 
-            temperature=args.temperature, 
-            max_tokens=1, 
-            logprobs=1024)
+        n=1, temperature=args.temperature, max_tokens=1, logprobs=1024
+    )
 
     # follow the algorithm from https://arxiv.org/pdf/2211.17192.pdf page 3
     def speculative_step_stochastic(prefix) -> List[int]:
-        draft_run = draft.generate.remote(prompt_token_ids=[prefix], sampling_params=draft_sp)
+        draft_run = draft.generate.remote(
+            prompt_token_ids=[prefix], sampling_params=draft_sp
+        )
         draft_run = ray.get(draft_run)
         draft_run = draft_run[0].outputs[0]
 
@@ -57,17 +58,19 @@ def main(args):
 
         oracle_prompts = [prefix]
         for i in range(len(xs)):
-            oracle_prompts += [prefix + xs[:i+1]]
+            oracle_prompts += [prefix + xs[: i + 1]]
 
-        oracle_run = oracle.generate.remote(prompt_token_ids=oracle_prompts, sampling_params=draft_sp)
+        oracle_run = oracle.generate.remote(
+            prompt_token_ids=oracle_prompts, sampling_params=draft_sp
+        )
         oracle_run = ray.get(oracle_run)
         ps = [r.outputs[0].logprobs[0] for r in oracle_run]
-        
+
         rs = np.random.uniform(0, 1, size=(args.gamma,))
         n = 0
         for i, x in enumerate(xs):
             qx = qs[i][x]
-            px = ps[i][x] if x in ps[i] else -1 * float('inf')
+            px = ps[i][x] if x in ps[i] else -1 * float("inf")
             ratio = np.exp(px - qx)
             # accept if r is less than ratio - reward guesses where p(x) is higher than q(x)
             if rs[i] < ratio:
@@ -84,8 +87,8 @@ def main(args):
                 pp[k] = np.exp(v)
                 if k in qs[n + 1]:
                     pp[k] -= np.exp(qs[n + 1][k])
-                    if pp[k] < 0.:
-                        pp[k] = 0.
+                    if pp[k] < 0.0:
+                        pp[k] = 0.0
                 sum_pp += pp[k]
 
             # normalize distribution
@@ -99,7 +102,9 @@ def main(args):
         return xs[:n] + [sampled_token]
 
     def speculative_step_deterministic(prefix: List[int]) -> Tuple[List[int], bool]:
-        draft_run = draft.generate.remote(prompt_token_ids=[prefix], sampling_params=draft_sp)
+        draft_run = draft.generate.remote(
+            prompt_token_ids=[prefix], sampling_params=draft_sp
+        )
         draft_run = ray.get(draft_run)
         draft_run = draft_run[0].outputs[0]
 
@@ -107,9 +112,11 @@ def main(args):
 
         oracle_prompts = [prefix]
         for i in range(len(xs)):
-            oracle_prompts += [prefix + xs[:i+1]]
+            oracle_prompts += [prefix + xs[: i + 1]]
 
-        oracle_run = oracle.generate.remote(prompt_token_ids=oracle_prompts, sampling_params=draft_sp)
+        oracle_run = oracle.generate.remote(
+            prompt_token_ids=oracle_prompts, sampling_params=draft_sp
+        )
         oracle_run = ray.get(oracle_run)
 
         n = 0
@@ -121,19 +128,19 @@ def main(args):
             else:
                 break
 
-        done = oracle_run[n + 1].outputs[0].finish_reason != 'length'
-        
+        done = oracle_run[n + 1].outputs[0].finish_reason != "length"
+
         return xs[:n] + [sampled_token], done
 
-    df = pd.read_parquet(args.dataset, engine='pyarrow')
+    df = pd.read_parquet(args.dataset, engine="pyarrow")
     indexer = df.loc()
 
     accepted = 0
     total_generated = 0
 
     for i in range(1000):
-        prompt = indexer[i].conversation_a[0]['content']
-        input_ids = tokenizer(prompt)['input_ids']
+        prompt = indexer[i].conversation_a[0]["content"]
+        input_ids = tokenizer(prompt)["input_ids"]
         prefix = list(input_ids)
         done = False
         next_tokens = []
@@ -145,42 +152,48 @@ def main(args):
 
     print("total accepted: ", accepted)
     print("total generated: ", total_generated)
-    print("alpha: ", accepted/total_generated)
+    print("alpha: ", accepted / total_generated)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description='Benchmark the accuracy/alpha of a draft model attempting to predict an oracle'
-        'model')
-    parser.add_argument('--oracle-model', type=str, default='facebook/opt-125m')
-    parser.add_argument('--draft-model', type=str, default='facebook/opt-125m')
-    parser.add_argument('--tokenizer', type=str, default=None)
-    parser.add_argument('--dataset', type=str)
-    parser.add_argument('--gamma', type=int, default=5, help='number of tokens to sample ahead')
-    parser.add_argument('--split', type=float, default=0.08, help='memory to give draft model')
-    parser.add_argument('--temperature', type=float, choices=[0., 1.], default=0.)
-    parser.add_argument('--input-len', type=int, default=32)
-    parser.add_argument('--output-len', type=int, default=128)
-    parser.add_argument('--batch-size', type=int, default=8)
-    parser.add_argument('--num-iters',
-                        type=int,
-                        default=3,
-                        help='Number of iterations to run.')
-    parser.add_argument('--trust-remote-code',
-                        action='store_true',
-                        help='trust remote code from huggingface')
+        description="Benchmark the accuracy/alpha of a draft model attempting to predict an oracle"
+        "model"
+    )
+    parser.add_argument("--oracle-model", type=str, default="facebook/opt-125m")
+    parser.add_argument("--draft-model", type=str, default="facebook/opt-125m")
+    parser.add_argument("--tokenizer", type=str, default=None)
+    parser.add_argument("--dataset", type=str)
     parser.add_argument(
-        '--draft-dtype',
-        type=str,
-        default='auto',
-        choices=['auto', 'half', 'float16', 'bfloat16', 'float', 'float32'],
+        "--gamma", type=int, default=5, help="number of tokens to sample ahead"
     )
     parser.add_argument(
-        '--oracle-dtype',
+        "--split", type=float, default=0.08, help="memory to give draft model"
+    )
+    parser.add_argument("--temperature", type=float, choices=[0.0, 1.0], default=0.0)
+    parser.add_argument("--input-len", type=int, default=32)
+    parser.add_argument("--output-len", type=int, default=128)
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument(
+        "--num-iters", type=int, default=3, help="Number of iterations to run."
+    )
+    parser.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        help="trust remote code from huggingface",
+    )
+    parser.add_argument(
+        "--draft-dtype",
         type=str,
-        default='auto',
-        choices=['auto', 'half', 'float16', 'bfloat16', 'float', 'float32'],
+        default="auto",
+        choices=["auto", "half", "float16", "bfloat16", "float", "float32"],
+    )
+    parser.add_argument(
+        "--oracle-dtype",
+        type=str,
+        default="auto",
+        choices=["auto", "half", "float16", "bfloat16", "float", "float32"],
     )
     args = parser.parse_args()
 
     main(args)
-
