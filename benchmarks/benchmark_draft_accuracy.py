@@ -1,5 +1,6 @@
 import argparse
 import time
+from typing import List
 
 import numpy as np
 from tqdm import tqdm
@@ -44,7 +45,7 @@ def main(args):
             logprobs=1024)
 
     # follow the algorithm from https://arxiv.org/pdf/2211.17192.pdf page 3
-    def speculative_step(prefix):
+    def speculative_step_stochastic(prefix) -> List[int]:
         draft_run = draft.generate.remote(prompt_token_ids=[prefix], sampling_params=draft_sp)
         draft_run = ray.get(draft_run)
         draft_run = draft_run[0].outputs[0]
@@ -64,16 +65,15 @@ def main(args):
         n = 0
         for i, x in enumerate(xs):
             qx = qs[i][x]
-            px = ps[i][x]
-            ratio = np.exp(qx - px)
+            px = ps[i][x] if x in ps[i] else -1 * float('inf')
+            ratio = np.exp(px - qx)
             # accept if r is less than ratio - reward guesses where p(x) is higher than q(x)
             if rs[i] < ratio:
                 n += 1
             else:
                 break
 
-        print("accepted", n)
-        
+        # TODO add temperature to the sampling step here
         pp = ps[n]
         sum_pp = 0
         if n < len(xs) - 1:
@@ -94,9 +94,36 @@ def main(args):
         tokens = list(pp.keys())
         probs = [pp[t] for t in tokens]
         sampled_token = np.random.choice(tokens, p=probs)
-        print("sampled", sampled_token)
+        return xs[:n] + [sampled_token]
 
-    speculative_step(input_ids)
+    def speculative_step_deterministic(prefix: List[int]) -> List[int]:
+        draft_run = draft.generate.remote(prompt_token_ids=[prefix], sampling_params=draft_sp)
+        draft_run = ray.get(draft_run)
+        draft_run = draft_run[0].outputs[0]
+
+        xs = draft_run.token_ids
+
+        oracle_prompts = [prefix]
+        for i in range(len(xs)):
+            oracle_prompts += [prefix + xs[:i+1]]
+
+        oracle_run = oracle.generate.remote(prompt_token_ids=oracle_prompts, sampling_params=draft_sp)
+        oracle_run = ray.get(oracle_run)
+
+        n = 0
+        sampled_token = -1
+        for i, x in enumerate(xs):
+            sampled_token = oracle_run[i].outputs[0].token_ids[0]
+            if x == sampled_token:
+                n += 1
+            else:
+                break
+
+        return xs[:n] + [sampled_token]
+
+    out1 = speculative_step_stochastic(input_ids)
+    out2 = speculative_step_deterministic(input_ids)
+    __import__('pdb').set_trace()
 
 
 if __name__ == '__main__':
