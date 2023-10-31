@@ -1,5 +1,6 @@
 import argparse
 import time
+import os
 from typing import List, Tuple
 
 import numpy as np
@@ -13,40 +14,42 @@ import pandas as pd
 
 import ray
 
+LOGPROBS_FANOUT=256
 
 def main(args):
-    ray.init()
-    oracle = ray.remote(num_gpus=(1.0 - 0.1 - args.split))(LLM).remote(
+    oracle = ray.remote(num_gpus=1)(LLM).remote(
         model=args.oracle_model,
         tokenizer=args.tokenizer,
         max_num_seqs=args.batch_size * args.gamma,
         trust_remote_code=args.trust_remote_code,
         dtype=args.oracle_dtype,
-        gpu_memory_utilization=(1.0 - 0.1 - args.split),
+        gpu_memory_utilization=0.9,
     )
+    print("oracle actor: ", oracle)
 
-    draft = ray.remote(num_gpus=(args.split))(LLM).remote(
+    draft = ray.remote(num_gpus=1)(LLM).remote(
         model=args.draft_model,
         tokenizer=args.tokenizer,
         max_num_seqs=args.batch_size,
         trust_remote_code=args.trust_remote_code,
         dtype=args.draft_dtype,
-        gpu_memory_utilization=(args.split),
+        gpu_memory_utilization=0.9,
     )
+    print("draft actor: ", draft)
 
     input_text = "The strangest city in California is San"
     tokenizer = LlamaTokenizerFast.from_pretrained(args.tokenizer)
     input_ids = tokenizer(input_text)["input_ids"]
 
     draft_sp = SamplingParams(
-        n=1, temperature=args.temperature, max_tokens=args.gamma, logprobs=1024
+        n=1, temperature=args.temperature, max_tokens=args.gamma, logprobs=LOGPROBS_FANOUT
     )
     oracle_sp = SamplingParams(
-        n=1, temperature=args.temperature, max_tokens=1, logprobs=1024
+        n=1, temperature=args.temperature, max_tokens=1, logprobs=LOGPROBS_FANOUT
     )
 
     # follow the algorithm from https://arxiv.org/pdf/2211.17192.pdf page 3
-    def speculative_step_stochastic(prefix) -> List[int]:
+    def speculative_step_stochastic(prefix) -> Tuple[List[int], bool]:
         draft_run = draft.generate.remote(
             prompt_token_ids=[prefix], sampling_params=draft_sp
         )
@@ -61,7 +64,7 @@ def main(args):
             oracle_prompts += [prefix + xs[: i + 1]]
 
         oracle_run = oracle.generate.remote(
-            prompt_token_ids=oracle_prompts, sampling_params=draft_sp
+            prompt_token_ids=oracle_prompts, sampling_params=oracle_sp
         )
         oracle_run = ray.get(oracle_run)
         ps = [r.outputs[0].logprobs[0] for r in oracle_run]
@@ -99,11 +102,14 @@ def main(args):
         tokens = list(pp.keys())
         probs = [pp[t] for t in tokens]
         sampled_token = np.random.choice(tokens, p=probs)
-        return xs[:n] + [sampled_token]
+
+        done = oracle_run[n].outputs[0].finish_reason != "length"
+
+        return xs[:n] + [sampled_token], done
 
     def speculative_step_deterministic(prefix: List[int]) -> Tuple[List[int], bool]:
         draft_run = draft.generate.remote(
-            prompt_token_ids=[prefix], sampling_params=draft_sp
+            prompt_token_ids=[prefix], sampling_params=draft_sp, use_tqdm=False
         )
         draft_run = ray.get(draft_run)
         draft_run = draft_run[0].outputs[0]
@@ -115,7 +121,7 @@ def main(args):
             oracle_prompts += [prefix + xs[: i + 1]]
 
         oracle_run = oracle.generate.remote(
-            prompt_token_ids=oracle_prompts, sampling_params=draft_sp
+            prompt_token_ids=oracle_prompts, sampling_params=oracle_sp, use_tqdm=False
         )
         oracle_run = ray.get(oracle_run)
 
@@ -128,7 +134,7 @@ def main(args):
             else:
                 break
 
-        done = oracle_run[n + 1].outputs[0].finish_reason != "length"
+        done = oracle_run[n].outputs[0].finish_reason != "length"
 
         return xs[:n] + [sampled_token], done
 
@@ -148,14 +154,19 @@ def main(args):
             prefix += next_tokens
             next_tokens, done = speculative_step_deterministic(prefix)
             accepted += len(next_tokens) - 1
-            total_generated += accepted
-
-    print("total accepted: ", accepted)
-    print("total generated: ", total_generated)
-    print("alpha: ", accepted / total_generated)
+            total_generated += len(next_tokens)
+            print("predicted", len(next_tokens), "tokens")
+        print("total accepted: ", accepted)
+        print("total generated: ", total_generated)
+        print("alpha: ", accepted / total_generated)
 
 
 if __name__ == "__main__":
+    runtime_env = {
+        "env_vars": {"HUGGING_FACE_HUB_TOKEN": os.getenv("HUGGING_FACE_HUB_TOKEN")}
+    }
+    ray.init(runtime_env=runtime_env)
+
     parser = argparse.ArgumentParser(
         description="Benchmark the accuracy/alpha of a draft model attempting to predict an oracle"
         "model"
