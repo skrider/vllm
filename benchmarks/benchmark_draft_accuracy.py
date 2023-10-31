@@ -1,6 +1,6 @@
 import argparse
 import time
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 from tqdm import tqdm
@@ -8,6 +8,8 @@ import torch
 from multiprocessing import Process, Pipe
 from transformers import LlamaTokenizerFast
 from vllm import LLM, SamplingParams
+
+import pandas as pd
 
 import ray
 
@@ -96,7 +98,7 @@ def main(args):
         sampled_token = np.random.choice(tokens, p=probs)
         return xs[:n] + [sampled_token]
 
-    def speculative_step_deterministic(prefix: List[int]) -> List[int]:
+    def speculative_step_deterministic(prefix: List[int]) -> Tuple[List[int], bool]:
         draft_run = draft.generate.remote(prompt_token_ids=[prefix], sampling_params=draft_sp)
         draft_run = ray.get(draft_run)
         draft_run = draft_run[0].outputs[0]
@@ -119,12 +121,31 @@ def main(args):
             else:
                 break
 
-        return xs[:n] + [sampled_token]
+        done = oracle_run[n + 1].outputs[0].finish_reason != 'length'
+        
+        return xs[:n] + [sampled_token], done
 
-    out1 = speculative_step_stochastic(input_ids)
-    out2 = speculative_step_deterministic(input_ids)
-    __import__('pdb').set_trace()
+    df = pd.read_parquet(args.dataset, engine='pyarrow')
+    indexer = df.loc()
 
+    accepted = 0
+    total_generated = 0
+
+    for i in range(1000):
+        prompt = indexer[i].conversation_a[0]['content']
+        input_ids = tokenizer(prompt)['input_ids']
+        prefix = list(input_ids)
+        done = False
+        next_tokens = []
+        while not done:
+            prefix += next_tokens
+            next_tokens, done = speculative_step_deterministic(prefix)
+            accepted += len(next_tokens) - 1
+            total_generated += accepted
+
+    print("total accepted: ", accepted)
+    print("total generated: ", total_generated)
+    print("alpha: ", accepted/total_generated)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -133,6 +154,7 @@ if __name__ == '__main__':
     parser.add_argument('--oracle-model', type=str, default='facebook/opt-125m')
     parser.add_argument('--draft-model', type=str, default='facebook/opt-125m')
     parser.add_argument('--tokenizer', type=str, default=None)
+    parser.add_argument('--dataset', type=str)
     parser.add_argument('--gamma', type=int, default=5, help='number of tokens to sample ahead')
     parser.add_argument('--split', type=float, default=0.08, help='memory to give draft model')
     parser.add_argument('--temperature', type=float, choices=[0., 1.], default=0.)
