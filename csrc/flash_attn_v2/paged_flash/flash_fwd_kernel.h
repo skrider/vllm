@@ -126,7 +126,7 @@ inline __device__ void compute_attn_1rowblock(const Params& params,
     if (atom_info.q_len == 0) return;
 
     // stream the kv block idxs into shared memory
-    smem_ptr<int32_t> block_idx_list = make_smem_ptr<int32_t>(smem_ + Kernel_traits::kSmemFlashSize);
+    smem_ptr<int64_t> block_idx_list = make_smem_ptr<int64_t>(smem_ + Kernel_traits::kSmemFlashSize);
     atom_info.load_kv_block_idxs<Kernel_traits::kNThreads>(block_idx_list, tidx);
 
     // We iterate over the blocks in reverse order. This is because the last block is the only one
@@ -163,6 +163,14 @@ inline __device__ void compute_attn_1rowblock(const Params& params,
     Tensor sVt = make_tensor(sV.data(), typename Kernel_traits::SmemLayoutVtransposed{});
     Tensor sVtNoSwizzle =
         make_tensor(sV.data(), typename Kernel_traits::SmemLayoutVtransposedNoSwizzle{});
+
+    if (tidx == 0 && blockIdx.x == 0 && blockIdx.y == 0) {
+        // printf("sV:");
+        // cute::print(sV);
+        printf("sV layout:");
+        cute::print_latex(typename Kernel_traits::SmemLayoutKV{});
+    }
+    return;
 
     typename Kernel_traits::GmemTiledCopyQKV gmem_tiled_copy_QKV;
     auto gmem_thr_copy_QKV = gmem_tiled_copy_QKV.get_thread_slice(tidx);
@@ -461,7 +469,7 @@ inline __device__ void compute_attn(const Params& params)
     int draft_len = params.draft_lens[atom_idx];
     int context_len = params.context_lens[atom_idx];
 
-    atom.block_idx_list = reinterpret_cast<AttentionAtom::index_t*>(params.block_tables) + atom_idx * params.max_num_blocks_per_seq;
+    atom.block_idx_list = reinterpret_cast<AttentionAtom::block_index_t*>(params.block_tables) + atom_idx * params.max_num_blocks_per_seq;
     atom.q_start_idx = atom_idx * params.max_num_query;
     atom.q_len = draft_len;
     atom.kv_blocks = DIVIDE_ROUND_UP(context_len, params.block_size);

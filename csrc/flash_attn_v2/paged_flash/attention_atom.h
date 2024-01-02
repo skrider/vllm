@@ -7,8 +7,9 @@
 
 struct __align__(32) AttentionAtom {
     using index_t = uint32_t;
+    using block_index_t = int64_t;
 
-    index_t* block_idx_list;
+    block_index_t* block_idx_list;
 
     index_t q_start_idx;
     index_t q_len;
@@ -18,7 +19,7 @@ struct __align__(32) AttentionAtom {
     index_t unused;
 
     template <int threads>
-    __device__ void load_kv_block_idxs(cute::smem_ptr<int32_t> block_idx_list_shr, int tidx) const
+    __device__ void load_kv_block_idxs(cute::smem_ptr<block_index_t> block_idx_list_shr, int tidx) const
     {
         for (int i = tidx; i < kv_blocks; i += threads) { block_idx_list_shr[i] = block_idx_list[i]; }
         // Aggressive (but safe) sync

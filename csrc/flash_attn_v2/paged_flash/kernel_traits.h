@@ -63,6 +63,7 @@ struct Flash_fwd_kernel_traits : public Base {
     using Element = typename Base::Element;
     using ElementAccum = typename Base::ElementAccum;
     using index_t = typename Base::index_t;
+    using block_index_t = int64_t;
     static constexpr bool Has_cp_async = Base::Has_cp_async;
     using SmemCopyAtom = typename Base::SmemCopyAtom;
     using SmemCopyAtomTransposed = typename Base::SmemCopyAtomTransposed;
@@ -125,7 +126,7 @@ struct Flash_fwd_kernel_traits : public Base {
     static constexpr int kSmemKVCount = size(SmemLayoutKV{}) * 2;
     static constexpr int kSmemQSize = kSmemQCount * sizeof(Element);
     static constexpr int kSmemKVSize = kSmemKVCount * sizeof(Element);
-    static constexpr int kSmemBlockSize = kMaxBlocks * sizeof(int32_t);
+    static constexpr int kSmemBlockSize = kMaxBlocks * sizeof(block_index_t);
     static constexpr int kSmemFlashSize = Share_Q_K_smem ? std::max(kSmemQSize, kSmemKVSize)
                                                          : kSmemQSize + kSmemKVSize;
     static constexpr int kSmemSize = kSmemFlashSize + kSmemBlockSize;

@@ -44,6 +44,7 @@ struct Qkv_params {
 struct Flash_fwd_params : public Qkv_params {
     // The O matrix (output).
     void* __restrict__ o_ptr;
+    using block_index_t = int64_t;
 
     // The attention metadata
     // AttentionAtom* __restrict__ atoms;
@@ -58,7 +59,7 @@ struct Flash_fwd_params : public Qkv_params {
     int block_size;
     int max_num_blocks_per_seq;
 
-    index_t* __restrict__ block_tables;
+    block_index_t* __restrict__ block_tables;
     index_t* __restrict__ context_lens;
     index_t* __restrict__ draft_lens;
 

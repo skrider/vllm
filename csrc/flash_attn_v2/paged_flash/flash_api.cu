@@ -86,13 +86,13 @@ void paged_flash_attention(
     params.block_size = block_size;
     params.max_num_blocks_per_seq = max_num_blocks_per_seq;
 
-    params.block_tables = reinterpret_cast<Flash_fwd_params::index_t*>(block_tables.data_ptr());
+    params.block_tables = reinterpret_cast<Flash_fwd_params::block_index_t*>(block_tables.data_ptr());
     params.context_lens = reinterpret_cast<Flash_fwd_params::index_t*>(context_lens.data_ptr());
     params.draft_lens = reinterpret_cast<Flash_fwd_params::index_t*>(draft_lens.data_ptr());
 
     const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
-    run_flash_fwd<flash::Flash_fwd_kernel_traits<64, 128, 128, 4>, /*Is_causal=*/true>(
+    run_flash_fwd<flash::Flash_fwd_kernel_traits<32, 64, 64, 4>, /*Is_causal=*/true>(
         params, stream);
 
     return;
