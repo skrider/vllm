@@ -22,7 +22,14 @@ class FlashAttentionImpl:
         value_cache: torch.Tensor,
         input_metadata: InputMetadata,
     ) -> None:
-        pass
+        cache_ops.reshape_and_cache_flash(
+            key,
+            value,
+            key_cache,
+            value_cache,
+            input_metadata.slot_mapping.flatten(),
+            input_metadata.kv_cache_dtype,
+        )
 
     @staticmethod
     def forward_decode(
@@ -69,8 +76,8 @@ class FlashAttentionImpl:
             query,
             key_cache,
             value_cache,
-            None,
-            None,
+            key,
+            value,
             cache_seqlens=input_metadata.context_lens,
             block_table=input_metadata.block_tables,
             causal=True,
