@@ -111,7 +111,6 @@ class FlashAttentionDecodeBackend:
         else:
             # Decoding run.
             query = query.unflatten(0, (batch_size, 1))
-            # __import__('pdb').set_trace()
             output = FlashAttentionImpl.forward_decode(
                 query,
                 key_cache,
