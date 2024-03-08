@@ -23,8 +23,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     &silu_and_mul,
     "Activation function used in SwiGLU.");
   ops.def(
-    "gelu_and_mul",
-    &gelu_and_mul,
     "Activation function used in GeGLU.");
   ops.def(
     "gelu_new",
@@ -80,6 +78,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   cache_ops.def(
     "reshape_and_cache",
     &reshape_and_cache,
+    "Reshape the key and value tensors and cache them");
+  cache_ops.def(
+    "reshape_and_cache_flash",
+    &reshape_and_cache_flash,
     "Reshape the key and value tensors and cache them");
   cache_ops.def(
     "convert_fp8_e5m2",
