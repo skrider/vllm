@@ -1,3 +1,6 @@
 [submodule "csrc/flash-attention"]
 	path = csrc/flash-attention
 	url = git@github.com:skrider/flash-attention.git
+[submodule "csrc/cutlass"]
+	path = csrc/cutlass
+	url = git@github.com:NVIDIA/cutlass.git
