@@ -3,7 +3,7 @@ from typing import List, Optional
 import torch
 
 from vllm._C import cache_ops
-from flash_attn import flash_attn_func
+from flash_attn import flash_attn_with_kvcache
 from vllm.model_executor.input_metadata import InputMetadata
 
 _PARTITION_SIZE = 512
@@ -45,7 +45,7 @@ class FlashAttentionImpl:
             (input_metadata.max_context_len + _PARTITION_SIZE - 1) //
             _PARTITION_SIZE)
 
-        return flash_attn_func.flash_attn_with_kvcache(
+        return flash_attn_with_kvcache(
             query,
             key_cache,
             value_cache,
@@ -72,7 +72,7 @@ class FlashAttentionImpl:
             (input_metadata.max_context_len + _PARTITION_SIZE - 1) //
             _PARTITION_SIZE)
 
-        return flash_attn_func.flash_attn_with_kvcache(
+        return flash_attn_with_kvcache(
             query,
             key_cache,
             value_cache,
