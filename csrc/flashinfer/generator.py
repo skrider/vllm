@@ -20,8 +20,7 @@ import pathlib
 from typing import List
 
 root = pathlib.Path(__name__).cwd()
-enable_bf16 = True
-
+enable_bf16 = False
 
 def get_instantiation_cu() -> List[str]:
     prefix = "generated"
@@ -30,13 +29,13 @@ def get_instantiation_cu() -> List[str]:
     if enable_bf16:
         dtypes["bf16"] = "nv_bfloat16"
     group_sizes = os.environ.get("FLASHINFER_GROUP_SIZES", "1,4,8").split(",")
-    head_dims = os.environ.get("FLASHINFER_HEAD_DIMS", "64,128,256").split(",")
+    head_dims = os.environ.get("FLASHINFER_HEAD_DIMS", "128").split(",")
     group_sizes = [int(x) for x in group_sizes]
     head_dims = [int(x) for x in head_dims]
-    causal_options = [False, True]
+    causal_options = [True]
     allow_fp16_qk_reduction_options = [False, True]
-    layout_options = ["HND", "NHD"]
-    pos_encoding_mode_options = ["None", "RoPELlama", "ALiBi"]
+    layout_options = ["NHD"]
+    pos_encoding_mode_options = ["None"]
 
     # dispatch.inc
     path = root / prefix / "dispatch.inc"

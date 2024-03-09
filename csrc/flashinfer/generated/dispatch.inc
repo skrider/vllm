@@ -4,8 +4,6 @@
   _DISPATCH_CASE(8, GROUP_SIZE, __VA_ARGS__) \
 // EOL
 #define _DISPATCH_CASES_head_dim(...)        \
-  _DISPATCH_CASE(64, HEAD_DIM, __VA_ARGS__) \
   _DISPATCH_CASE(128, HEAD_DIM, __VA_ARGS__) \
-  _DISPATCH_CASE(256, HEAD_DIM, __VA_ARGS__) \
 // EOL
 
